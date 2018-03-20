@@ -285,13 +285,13 @@ async def on_ready():
 
 
 COMMANDS = []
-def command(command_string):
+def command(command_string, description, usage=None):
     def decorator(func):
-        COMMANDS.append((command_string, func))
+        COMMANDS.append((command_string, func, description, usage))
     return decorator
 
 
-@command(u'!quote')
+@command(u'!quote', u'Get a random quote.', usage=u'!quote [title]')
 async def quote_command(message, rest):
     if rest:
         movie = get_movie(rest)
@@ -312,7 +312,7 @@ async def quote_command(message, rest):
         await client.send_message(message.channel, u'No results found.')
 
 
-@command(u'!title')
+@command(u'!title', u'Get the title that the last quote was from.')
 async def title_command(message, rest):
     movie = global_state['last_movie']
     if movie and movie.quotes:
@@ -321,7 +321,7 @@ async def title_command(message, rest):
         await client.send_message(message.channel, u'There is none.')
 
 
-@command(u'!character')
+@command(u'!character', u'Get the character that the last quote was from.')
 async def character_command(message, rest):
     if global_state['last_character']:
         await client.send_message(message.channel, global_state['last_character'])
@@ -329,7 +329,7 @@ async def character_command(message, rest):
         await client.send_message(message.channel, u'No character available.')
 
 
-@command(u'!another')
+@command(u'!another', u'Get another quote from the last title.')
 async def another_command(message, rest):
     movie = global_state['last_movie']
     if movie:
@@ -341,7 +341,7 @@ async def another_command(message, rest):
         await client.send_message(message.channel, u'Nothing to nother.')
 
 
-@command(u'!qtrivia add')
+@command(u'!qtrivia add', u'Add a new title to the quote trivia list.', usage=u'!qtrivia add <title>')
 async def qtrivia_add_command(message, rest):
     movie = get_movie(rest)
     if movie:
@@ -356,12 +356,12 @@ async def qtrivia_add_command(message, rest):
         await client.send_message(message.channel, u'No results found.')
 
 
-@command(u'!qtrivia clear')
+@command(u'!qtrivia clear', u'Clear the quote trivia list.')
 async def qtrivia_clear_command(message, rest):
     save_trivia_movies([])
 
 
-@command(u'!qtrivia remove')
+@command(u'!qtrivia remove', u'Remove a title from the quote trivia list.', usage=u'!qtrivia remove <title>')
 async def qtrivia_remove_command(message, rest):
     movie_title_slug = slugify(rest.strip())
     if movie_title_slug:
@@ -377,7 +377,7 @@ async def qtrivia_remove_command(message, rest):
             await client.send_message(message.channel, u'No matches for title "{}".'.format(movie_title_slug))
 
 
-@command(u'!qtrivia list')
+@command(u'!qtrivia list', u'List the titles currently in the quote trivia list.')
 async def qtrivia_list_command(message, rest):
     movie_titles = load_trivia_movies()
     if movie_titles:
@@ -386,7 +386,7 @@ async def qtrivia_list_command(message, rest):
         await client.send_message(message.channel, u'Empty.')
 
 
-@command(u'!qtrivia')
+@command(u'!qtrivia', u'Play quote trivia.', usage=u'!qtrivia [<amount> [title]]')
 async def qtrivia_command(message, rest):
     movie_lock = None
     count = 1
@@ -440,7 +440,7 @@ async def qtrivia_command(message, rest):
         await client.send_message(message.channel, u', '.join([u'{}: {}'.format(name, score) for name, score in scores.items()]))
 
 
-@command(u'!count')
+@command(u'!count', u'Get the amount of quotes a title has.', usage=u'!count <title>')
 async def count_command(message, rest):
     movie = get_movie(rest)
     if movie:
@@ -449,12 +449,13 @@ async def count_command(message, rest):
         await client.send_message(message.channel, u'No results found.')
 
 
-@command(u'!commands')
+@command(u'!commands', u'List all commands associated with the bot.')
 async def commands_command(message, rest):
-    await client.send_message(message.channel, u', '.join([command_text.strip() for command_text, _ in COMMANDS]))
+    command_descriptions = [u'**{}** - *{}*'.format(usage or command_text, description) for command_text, _, description, usage in COMMANDS]
+    await client.send_message(message.channel, u'\n'.join(command_descriptions))
 
 
-@command(u'!trivia')
+@command(u'!trivia', u'Play trivia.', usage=u'!trivia [<amount> [category]]')
 async def trivia_command(message, rest):
     category = None
     amount = 1
@@ -508,7 +509,7 @@ async def trivia_command(message, rest):
         await client.send_message(message.channel, u', '.join([u'{}: {}'.format(name, score) for name, score in scores.items()]))
 
 
-@command(u'!millionaire')
+@command(u'!millionaire', u'Play _Who Wants to be a Millionaire!_')
 async def millionaire_command(message, rest):
     player = message.author
     dollar_amounts = [u'$500',
@@ -606,19 +607,19 @@ async def millionaire_command(message, rest):
     await client.send_message(message.channel, u'{} walks away with {}.'.format(player, score))
 
 
-@command(u'!categories')
+@command(u'!categories', u'List all available trivia categories.')
 async def categories_command(message, rest):
     categories = get_categories()
     category_text = u'\n'.join(['**{}**: *{}*'.format(id, name) for id, name in categories])
     await client.send_message(message.channel, category_text)
 
 
-@command(u'!source')
+@command(u'!source', u'Get a link to the GitHub repository.')
 async def source_command(message, rest):
     await client.send_message(message.channel, u'https://github.com/Vectorious/lilbot')
 
 
-@command(u'.')
+@command(u'.', u'Remove after @NotSoBot responds and delete duplicate ".badmeme" responses.', usage=u'.[@NotSoBot command]')
 async def badmeme_bot_command(message, rest):
     response = await client.wait_for_message(timeout=10, author=BADMEME_BOT, channel=message.channel)
     await client.delete_message(message)
@@ -632,7 +633,7 @@ async def badmeme_bot_command(message, rest):
 @client.event
 async def on_message(message):
     if message.author != client.user:
-        for command_text, func in COMMANDS:
+        for command_text, func, *_ in COMMANDS:
             if message.content.startswith(command_text):
                 await func(message, message.content[len(command_text):])
                 break
