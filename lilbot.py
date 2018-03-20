@@ -449,8 +449,8 @@ async def count_command(message, rest):
         await client.send_message(message.channel, u'No results found.')
 
 
-@command(u'!commands', u'List all commands associated with the bot.')
-async def commands_command(message, rest):
+@command(u'!help', u'List all commands associated with the bot.')
+async def help_command(message, rest):
     command_descriptions = [u'**{}** - *{}*'.format(usage or command_text, description) for command_text, _, description, usage in COMMANDS]
     await client.send_message(message.channel, u'\n'.join(command_descriptions))
 
