@@ -1,0 +1,12 @@
+# env
+.vscode/
+
+# virtualenv
+Include/
+Lib/
+Scripts/
+
+# settings
+movie_quotes/
+*.json
+token.txt
