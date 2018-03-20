@@ -259,9 +259,6 @@ def get_categories():
     return [(category[u'id'], category[u'name']) for category in response[u'trivia_categories']]
 
 
-
-
-
 def load_global_state():
     try:
         state = json.load(open(GLOBAL_STATE_PATH, 'r', encoding='utf-8'))
@@ -614,6 +611,11 @@ async def categories_command(message, rest):
     categories = get_categories()
     category_text = u'\n'.join(['**{}**: *{}*'.format(id, name) for id, name in categories])
     await client.send_message(message.channel, category_text)
+
+
+@command(u'!source')
+async def source_command(message, rest):
+    await client.send_message(message.channel, u'https://github.com/Vectorious/lilbot')
 
 
 @command(u'.')
