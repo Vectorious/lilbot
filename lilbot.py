@@ -504,6 +504,7 @@ async def trivia_command(message, rest):
                     await client.send_message(message.channel, u'Wrong. **{}**.'.format(question.correct_answer))
         else:
             await client.send_message(message.channel, u'Noobs. **{}**.'.format(question.correct_answer))
+        await asyncio.sleep(2)
 
     if scores and amount > 1:
         await client.send_message(message.channel, u', '.join([u'{}: {}'.format(name, score) for name, score in scores.items()]))
