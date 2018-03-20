@@ -107,7 +107,7 @@ global_state = {
 
 
 def slugify(value):
-    value = str(unicodedata.normalize('NFKD', value).encode('ascii', 'ignore'))
+    value = str(unicodedata.normalize('NFKD', value).encode('ascii', 'ignore'), encoding='ascii')
     value = re.sub(r'[^\w\s-]', '', value).strip().lower()
     value = re.sub(r'[-\s]+', '-', value)
     return value
