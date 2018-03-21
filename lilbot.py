@@ -103,6 +103,7 @@ global_state = {
     'last_movie': None,
     'last_character': u'There is none.',
     'trivia_token': None,
+    'trivia_leaderboard': {},
 }
 
 
@@ -257,6 +258,10 @@ def get_categories():
     url = 'https://opentdb.com/api_category.php'
     response = requests.get(url).json()
     return [(category[u'id'], category[u'name']) for category in response[u'trivia_categories']]
+
+
+def int_to_dollars(n):
+    return u'${:,}'.format(n)
 
 
 def load_global_state():
@@ -515,21 +520,22 @@ async def trivia_command(message, rest):
 async def millionaire_command(message, rest):
     player = message.author
     await client.send_message(message.channel, u'**{}, welcome to _Who Wants to be a Millionaire!_**'.format(player))
-    dollar_amounts = [u'$500',
-                      u'$1,000',
-                      u'$2,000',
-                      u'$3,000',
-                      u'$5,000',
-                      u'$7,000',
-                      u'$10,000',
-                      u'$20,000',
-                      u'$30,000',
-                      u'$50,000',
-                      u'$100,000',
-                      u'$250,000',
-                      u'$500,000',
-                      u'$1,000,000']
-    checkpoints = [u'$5,000', u'$50,000', u'$1,000,000']
+    # URGENT TODO: change to numeric type
+    dollar_amounts = [500,
+                      1000,
+                      2000,
+                      3000,
+                      5000,
+                      7000,
+                      10000,
+                      20000,
+                      30000,
+                      50000,
+                      100000,
+                      250000,
+                      500000,
+                      1000000]
+    checkpoints = [5000, 50000, 1000000]
 
     fifty_fifty = u'!50/50'
     lifelines = [fifty_fifty]
@@ -550,8 +556,8 @@ async def millionaire_command(message, rest):
         questions.extend(diff_questions)
 
     game_over = False
-    walk_away_amount = u'$0'
-    score = u'$0'
+    walk_away_amount = 0
+    score = 0
     for question_amount, question in zip(dollar_amounts, questions):
         if game_over:
             break
@@ -563,7 +569,7 @@ async def millionaire_command(message, rest):
         def answer_key_text():
             return u'\n'.join([u'**{}.** {}'.format(letter, answer) for letter, answer in sorted(answer_key.items())])
 
-        await client.send_message(message.channel, u'**{}**\n"{}"\n{}'.format(question_amount, question.question, answer_key_text()))
+        await client.send_message(message.channel, u'**${:,}**\n"{}"\n{}'.format(question_amount, question.question, answer_key_text()))
 
         def check(msg):
             if msg.author != player:
@@ -607,7 +613,28 @@ async def millionaire_command(message, rest):
             else:
                 await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
                 game_over = True
-    await client.send_message(message.channel, u'{} walks away with {}.'.format(player, score))
+    await client.send_message(message.channel, u'{} walks away with ${:,}.'.format(player, score))
+    scores = global_state['trivia_leaderboard'].get(player.id, {})
+    scores['played_games'] = scores.get('played_games', 0) + 1
+    scores['total_earnings'] = scores.get('total_earnings', 0) + score
+    scores['wins'] = scores.get('wins', 0) + int(score == 1_000_000)
+    scores['highest_score'] = max([scores.get('highest_score', 0), score])
+    global_state['trivia_leaderboard'][player.id] = scores
+    save_global_state()
+
+
+@command(u'!leaderboard', u'Display _Who Wants to be a Millionaire!_ leaderboard.')
+async def leaderboard_command(message, rest):
+    leaderboard = []
+    format_str = u'`{:<20}{:>19}{:>18}{:>9}{:>17}`'
+    for player_id, scores in sorted(global_state['trivia_leaderboard'].items(), key=lambda player_id_scores: player_id_scores[1]['total_earnings'], reverse=True):
+        name = str(await client.get_user_info(player_id))
+        leaderboard.append(format_str.format(name, int_to_dollars(scores['total_earnings']), int_to_dollars(scores['highest_score']), scores['wins'], scores['played_games']))
+    if leaderboard:
+        leaderboard.insert(0, u'**{}**'.format(format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Wins', u'Games Played')))
+        await client.send_message(message.channel, u'\n'.join(leaderboard))
+    else:
+        await client.send_message(message.channel, u'The leaderboard is empty.')
 
 
 @command(u'!fff', u'Play _Fastest Finger First_ to determine who gets to play _Millionaire!_')
