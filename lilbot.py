@@ -288,6 +288,7 @@ COMMANDS = []
 def command(command_string, description, usage=None):
     def decorator(func):
         COMMANDS.append((command_string, func, description, usage))
+        return func
     return decorator
 
 
@@ -451,7 +452,7 @@ async def count_command(message, rest):
 
 @command(u'!help', u'List all commands associated with the bot.')
 async def help_command(message, rest):
-    command_descriptions = [u'**{}** - *{}*'.format(usage or command_text, description) for command_text, _, description, usage in COMMANDS]
+    command_descriptions = [u'**`{}`** - *{}*'.format(usage or command_text, description) for command_text, _, description, usage in COMMANDS]
     await client.send_message(message.channel, u'\n'.join(command_descriptions))
 
 
@@ -513,6 +514,7 @@ async def trivia_command(message, rest):
 @command(u'!millionaire', u'Play _Who Wants to be a Millionaire!_')
 async def millionaire_command(message, rest):
     player = message.author
+    await client.send_message(message.channel, u'**{}, welcome to _Who Wants to be a Millionaire!_**'.format(player))
     dollar_amounts = [u'$500',
                       u'$1,000',
                       u'$2,000',
@@ -606,6 +608,45 @@ async def millionaire_command(message, rest):
                 await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
                 game_over = True
     await client.send_message(message.channel, u'{} walks away with {}.'.format(player, score))
+
+
+@command(u'!fff', u'Play _Fastest Finger First_ to determine who gets to play _Millionaire!_')
+async def fff_command(message, rest):
+    question = get_questions(1)
+    if question:
+        question = question[0]
+        
+        answers = [question.correct_answer, *question.incorrect_answers]
+        random.shuffle(answers)
+        answers = [(letter, answer) for letter, answer in zip(ALPHABET, answers)]
+        answer_key = dict(answers)
+
+        def answer_key_text():
+            return u'\n'.join([u'**{}.** {}'.format(letter, answer) for letter, answer in sorted(answer_key.items())])
+
+        answered = set()
+
+        await client.send_message(message.channel, u'**Fastest Finger First**\n"{}"\n{}'.format(question.question, answer_key_text()))
+
+        def check(msg):
+            if msg.author == client.user or msg.author in answered:
+                return False
+            upper_msg = msg.content.upper()
+            if upper_msg[0] in answer_key.keys() and (len(upper_msg) < 2 or not upper_msg[1].isalnum()):
+                if answer_key[upper_msg[0]] == question.correct_answer:
+                    return True
+                else:
+                    answered.add(msg.author)
+            return False
+        
+        response = await client.wait_for_message(timeout=30, channel=message.channel, check=check)
+
+        if response:
+            await millionaire_command(response, '')
+        else:
+            await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
+    else:
+        await client.send_message(message.channel, u'Unable to retrieve question.')
 
 
 @command(u'!categories', u'List all available trivia categories.')
