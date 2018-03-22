@@ -95,6 +95,8 @@ TRIVIA_PATH = 'trivia_movies.json'
 
 BADMEME_BOT = discord.User(id=u'170903342199865344')
 
+NAME_CACHE = {}
+
 client = discord.Client()
 imdb = Imdb()
 seen_memes = Cache(10)
@@ -105,6 +107,16 @@ global_state = {
     'trivia_token': None,
     'trivia_leaderboard': {},
 }
+
+
+async def get_discord_name(user_id):
+    name = NAME_CACHE.get(user_id, None)
+    if name:
+        return name
+    else:
+        name = str(await client.get_user_info(user_id))
+        NAME_CACHE[user_id] = name
+        return name
 
 
 def slugify(value):
@@ -520,7 +532,8 @@ async def trivia_command(message, rest):
 async def millionaire_command(message, rest):
     player = message.author
     await client.send_message(message.channel, u'**{}, welcome to _Who Wants to be a Millionaire!_**'.format(player))
-    # URGENT TODO: change to numeric type
+    await client.send_typing(message.channel)
+
     dollar_amounts = [500,
                       1000,
                       2000,
@@ -538,7 +551,8 @@ async def millionaire_command(message, rest):
     checkpoints = [5000, 50000, 1000000]
 
     fifty_fifty = u'!50/50'
-    lifelines = [fifty_fifty]
+    double_dip = u'!dd'
+    lifelines = [fifty_fifty, double_dip]
     
     question_sets = [(5, 'easy'), (5, 'medium'), (4, 'hard')]
     questions = []
@@ -555,12 +569,24 @@ async def millionaire_command(message, rest):
             return
         questions.extend(diff_questions)
 
+    if player.voice:
+        try:
+            voice = await client.join_voice_channel(player.voice.voice_channel)
+        except:
+            voice = None
+        if voice:
+            audio_question = voice.create_ffmpeg_player('question.mp3')
+            audio_question.start()
+    else:
+        voice = None
+
     game_over = False
     walk_away_amount = 0
     score = 0
     for question_amount, question in zip(dollar_amounts, questions):
         if game_over:
             break
+        used_lifelines = []
         answers = [question.correct_answer, *question.incorrect_answers]
         random.shuffle(answers)
         answers = [(letter, answer) for letter, answer in zip(ALPHABET, answers)]
@@ -581,9 +607,13 @@ async def millionaire_command(message, rest):
                 return True
             for lifeline in lifelines:
                 if lower_msg.startswith(lifeline):
-                    return True
+                    if double_dip in used_lifelines or (lifeline == double_dip and used_lifelines):
+                        return False
+                    else:
+                        return True
             return False
-        
+
+
         continuing = True
         while continuing:
             continuing = False
@@ -592,14 +622,46 @@ async def millionaire_command(message, rest):
                 lower_msg = response.content.lower()
                 if lower_msg.startswith(fifty_fifty):
                     lifelines.remove(fifty_fifty)
+                    used_lifelines.append(fifty_fifty)
                     answers_to_remove = random.sample(question.incorrect_answers, 2)
                     for letter, answer in list(answer_key.items()):
                         if answer in answers_to_remove:
                             answer_key.pop(letter)
                     await client.send_message(message.channel, u'**Remaining answers:**\n{}'.format(answer_key_text()))
                     continuing = True
+                elif lower_msg.startswith(double_dip):
+                    lifelines.remove(double_dip)
+                    used_lifelines.append(double_dip)
+                    response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
+                    if response:
+                        if answer_key[response.content[0].upper()] == question.correct_answer:
+                            await client.send_message(message.channel, u'**THAT IS CORRECT.**')
+                            if question_amount in checkpoints:
+                                score = question_amount
+                            walk_away_amount = question_amount
+                        else:
+                            await client.send_message(message.channel, u"I'm sorry... that is incorrect. You have one more shot at the prize.")
+                            answer_key.pop(response.content[0].upper())
+                            await client.send_message(message.channel, u'**Remaining answers:**\n{}'.format(answer_key_text()))
+                            response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
+                            if response:
+                                if answer_key[response.content[0].upper()] == question.correct_answer:
+                                    await client.send_message(message.channel, u'**THAT IS CORRECT.**')
+                                    if question_amount in checkpoints:
+                                        score = question_amount
+                                    walk_away_amount = question_amount
+                                else:
+                                    await client.send_message(message.channel, u'Wrong. The correct answer was **{}**.'.format(question.correct_answer))
+                                    game_over = True
+                            else:
+                                await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
+                                game_over = True
+                    else:
+                        await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
+                        game_over = True
                 elif lower_msg.startswith(u'!walk'):
                     score = walk_away_amount
+                    await client.send_message(message.channel, u'I respect that. The correct answer was **{}** by the way.'.format(question.correct_answer))
                     game_over = True
                 else:
                     if answer_key[lower_msg[0].upper()] == question.correct_answer:
@@ -625,13 +687,14 @@ async def millionaire_command(message, rest):
 
 @command(u'!leaderboard', u'Display _Who Wants to be a Millionaire!_ leaderboard.')
 async def leaderboard_command(message, rest):
+    client.send_typing(message.channel)
     leaderboard = []
     format_str = u'`{:<20}{:>19}{:>18}{:>9}{:>17}`'
     for player_id, scores in sorted(global_state['trivia_leaderboard'].items(), key=lambda player_id_scores: player_id_scores[1]['total_earnings'], reverse=True):
-        name = str(await client.get_user_info(player_id))
+        name = await get_discord_name(player_id)
         leaderboard.append(format_str.format(name, int_to_dollars(scores['total_earnings']), int_to_dollars(scores['highest_score']), scores['wins'], scores['played_games']))
     if leaderboard:
-        leaderboard.insert(0, u'**{}**'.format(format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Wins', u'Games Played')))
+        leaderboard.insert(0, u'**' + format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Wins', u'Games Played') + u'**')
         await client.send_message(message.channel, u'\n'.join(leaderboard))
     else:
         await client.send_message(message.channel, u'The leaderboard is empty.')
@@ -639,6 +702,7 @@ async def leaderboard_command(message, rest):
 
 @command(u'!fff', u'Play _Fastest Finger First_ to determine who gets to play _Millionaire!_')
 async def fff_command(message, rest):
+    client.send_typing(message.channel)
     question = get_questions(1)
     if question:
         question = question[0]

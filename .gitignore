@@ -7,7 +7,9 @@ Include/
 Lib/
 Scripts/
 
-# settings
+# data
 movie_quotes/
 *.json
 token.txt
+*.webm
+*.mp3
