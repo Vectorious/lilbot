@@ -1,6 +1,7 @@
 # env
 .vscode/
 TODO.md
+*.pyc
 
 # virtualenv
 Include/

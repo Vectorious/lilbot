@@ -11,6 +11,8 @@ import discord
 import requests
 from imdbpie import Imdb
 
+from millionaire_stats import *
+
 
 class Cache:
     def __init__(self, size):
@@ -22,6 +24,51 @@ class Cache:
         while len(self.items) > self.size:
             self.items.pop()
 
+    def __contains__(self, item):
+        return item in self.items
+
+
+class TimeCache:
+    def __init__(self, invalidate_time):
+        self.invalidate_time = invalidate_time
+        self.items = {}
+        self.items_updated = {}
+
+    def get(self, key, d=None):
+        age = self.age(key)
+        if age:
+            if age < self.invalidate_time:
+                return self.items[key]
+            else:
+                print('"{}" invalidated, last updated {} seconds ago.')
+                return d
+        else:
+            return d
+    
+    def __getitem__(self, key):
+        age = self.age(key)
+        if age:
+            if age < self.invalidate_time:
+                return self.items[key]
+            else:
+                print('"{}" invalidated, last updated {} seconds ago.')
+                # NOTE: just treat as normal KeyError. only raising exception here for consistency
+                raise KeyError()
+        else:
+            raise KeyError()
+    
+    def __setitem__(self, key, value):
+        self.items[key] = value
+        self.items_updated[key] = time.time()
+
+    def age(self, key):
+        updated = self.items_updated.get(key, None)
+        if updated:
+            now = time.time()
+            return int(now - updated)
+        else:
+            return None
+    
     def __contains__(self, item):
         return item in self.items
 
@@ -61,39 +108,14 @@ class Movie:
         return cls(ser_dict['title'], quotes)
 
 
-class Question:
-    # Example:
-    # "category": "Science: Computers",
-    # "type": "multiple",
-    # "difficulty": "medium",
-    # "question": "Moore&#039;s law originally stated that the number of transistors on a microprocessor chip would double every...",
-    # "correct_answer": "Year",
-    # "incorrect_answers": ["Four Years", "Two Years", "Eight Years"]
-    def __init__(self):
-        self.category = None
-        self.type = None
-        self.difficulty = None
-        self.question = None
-        self.correct_answer = None
-        self.incorrect_answers = None
-
-    @classmethod
-    def deserialize(cls, ser_dict):
-        question = cls()
-        for name, value in ser_dict.items():
-            if name != u'incorrect_answers':
-                setattr(question, name, html.unescape(value))
-            else:
-                question.incorrect_answers = [html.unescape(answer) for answer in value]
-        return question
-
-
 ALPHABET = u'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 GLOBAL_STATE_PATH = 'global_state.json'
 QUOTES_DIR = 'movie_quotes'
+MILLIONAIRE_STATS_DIR = 'millionaire_stats'
 TRIVIA_PATH = 'trivia_movies.json'
 
 BADMEME_BOT = discord.User(id=u'170903342199865344')
+TIME_CACHE = TimeCache(5 * 60)
 
 NAME_CACHE = {}
 
@@ -272,6 +294,22 @@ def get_categories():
     return [(category[u'id'], category[u'name']) for category in response[u'trivia_categories']]
 
 
+def how_long_ago(seconds):
+    minutes = seconds // 60
+    hours = minutes // 60
+    days = hours // 24
+    if days > 0:
+        unit = u'days' if days > 1 else u'day'
+        return u'{} {} ago'.format(days, unit)
+    if hours > 0:
+        unit = u'hours' if hours > 1 else u'hour'
+        return u'{} {} ago'.format(hours, unit)
+    if minutes > 0:
+        unit = u'minutes' if minutes > 1 else u'minute'
+        return u'{} {} ago'.format(minutes, unit)
+    return u'just now'
+
+
 def int_to_dollars(n):
     return u'${:,}'.format(n)
 
@@ -290,6 +328,40 @@ def save_global_state():
     if state['last_movie']:
         state['last_movie'] = global_state['last_movie'].title
     json.dump(state, open(GLOBAL_STATE_PATH, 'w', encoding='utf-8'))
+
+
+def get_millionaire_game_filenames():
+    return next(os.walk(MILLIONAIRE_STATS_DIR))[2]
+
+
+def load_millionaire_games(user_id, deserialize=True):
+    if isinstance(user_id, str) and user_id.endswith('.json'):
+        if user_id.startswith(MILLIONAIRE_STATS_DIR):
+            path = user_id
+        else:
+            path = os.path.join(MILLIONAIRE_STATS_DIR, user_id)
+    else:
+        path = os.path.join(MILLIONAIRE_STATS_DIR, '{}.json'.format(user_id))
+    try:
+        games = json.load(open(path, 'r', encoding='utf-8'))
+    except FileNotFoundError:
+        return None
+    if deserialize:
+        return [MillionaireGame.deserialize(game) for game in games]
+    else:
+        return games
+
+
+def save_millionaire_game(game):
+    path = os.path.join(MILLIONAIRE_STATS_DIR, '{}.json'.format(game.user))
+    games = load_millionaire_games(path, deserialize=False)
+    if not games:
+        games = []
+    games.append(game.serialize())
+    temp_ext = '.temp'
+    temp_path = path + temp_ext
+    json.dump(games, open(temp_path, 'w', encoding='utf-8'))
+    os.replace(temp_path, path)
 
 
 @client.event
@@ -581,16 +653,20 @@ async def millionaire_command(message, rest):
         voice = None
 
     game_over = False
+    stats_rounds = []
+    stats = MillionaireGame(player.id, encode_lifelines(lifelines), stats_rounds, timestamp(), None)
     walk_away_amount = 0
     score = 0
     for question_amount, question in zip(dollar_amounts, questions):
         if game_over:
             break
-        used_lifelines = []
+        lifelines_used = []
         answers = [question.correct_answer, *question.incorrect_answers]
         random.shuffle(answers)
         answers = [(letter, answer) for letter, answer in zip(ALPHABET, answers)]
         answer_key = dict(answers)
+
+        stats_round = MillionaireRound(question, question_amount, None, None)
 
         def answer_key_text():
             return u'\n'.join([u'**{}.** {}'.format(letter, answer) for letter, answer in sorted(answer_key.items())])
@@ -607,7 +683,7 @@ async def millionaire_command(message, rest):
                 return True
             for lifeline in lifelines:
                 if lower_msg.startswith(lifeline):
-                    if double_dip in used_lifelines or (lifeline == double_dip and used_lifelines):
+                    if double_dip in lifelines_used or (lifeline == double_dip and lifelines_used):
                         return False
                     else:
                         return True
@@ -622,7 +698,7 @@ async def millionaire_command(message, rest):
                 lower_msg = response.content.lower()
                 if lower_msg.startswith(fifty_fifty):
                     lifelines.remove(fifty_fifty)
-                    used_lifelines.append(fifty_fifty)
+                    lifelines_used.append(fifty_fifty)
                     answers_to_remove = random.sample(question.incorrect_answers, 2)
                     for letter, answer in list(answer_key.items()):
                         if answer in answers_to_remove:
@@ -631,11 +707,12 @@ async def millionaire_command(message, rest):
                     continuing = True
                 elif lower_msg.startswith(double_dip):
                     lifelines.remove(double_dip)
-                    used_lifelines.append(double_dip)
+                    lifelines_used.append(double_dip)
                     response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
                     if response:
                         if answer_key[response.content[0].upper()] == question.correct_answer:
                             await client.send_message(message.channel, u'**THAT IS CORRECT.**')
+                            stats_round.round_result = RoundResult.AnsweredCorrectly
                             if question_amount in checkpoints:
                                 score = question_amount
                             walk_away_amount = question_amount
@@ -647,62 +724,82 @@ async def millionaire_command(message, rest):
                             if response:
                                 if answer_key[response.content[0].upper()] == question.correct_answer:
                                     await client.send_message(message.channel, u'**THAT IS CORRECT.**')
+                                    stats_round.round_result = RoundResult.AnsweredCorrectly
                                     if question_amount in checkpoints:
                                         score = question_amount
                                     walk_away_amount = question_amount
                                 else:
                                     await client.send_message(message.channel, u'Wrong. The correct answer was **{}**.'.format(question.correct_answer))
+                                    stats_round.round_result = RoundResult.AnsweredIncorrectly
                                     game_over = True
                             else:
                                 await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
+                                stats_round.round_result = RoundResult.AnsweredIncorrectly
                                 game_over = True
                     else:
                         await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
+                        stats_round.round_result = RoundResult.AnsweredIncorrectly
                         game_over = True
                 elif lower_msg.startswith(u'!walk'):
                     score = walk_away_amount
                     await client.send_message(message.channel, u'I respect that. The correct answer was **{}** by the way.'.format(question.correct_answer))
+                    stats_round.round_result = RoundResult.Walked
                     game_over = True
                 else:
                     if answer_key[lower_msg[0].upper()] == question.correct_answer:
                         await client.send_message(message.channel, u'**THAT IS CORRECT.**')
+                        stats_round.round_result = RoundResult.AnsweredCorrectly
                         if question_amount in checkpoints:
                             score = question_amount
                         walk_away_amount = question_amount
                     else:
                         await client.send_message(message.channel, u'Wrong. The correct answer was **{}**.'.format(question.correct_answer))
+                        stats_round.round_result = RoundResult.AnsweredIncorrectly
                         game_over = True
             else:
                 await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
+                stats_round.round_result = RoundResult.AnsweredIncorrectly
                 game_over = True
+        stats_round.lifelines_used = encode_lifelines(lifelines_used)
+        stats.rounds.append(stats_round)
     await client.send_message(message.channel, u'{} walks away with ${:,}.'.format(player, score))
-    scores = global_state['trivia_leaderboard'].get(player.id, {})
-    scores['played_games'] = scores.get('played_games', 0) + 1
-    scores['total_earnings'] = scores.get('total_earnings', 0) + score
-    scores['wins'] = scores.get('wins', 0) + int(score == 1_000_000)
-    scores['highest_score'] = max([scores.get('highest_score', 0), score])
-    global_state['trivia_leaderboard'][player.id] = scores
-    save_global_state()
+    stats.amount_earned = score
+    save_millionaire_game(stats)
 
 
 @command(u'!leaderboard', u'Display _Who Wants to be a Millionaire!_ leaderboard.')
 async def leaderboard_command(message, rest):
-    client.send_typing(message.channel)
-    leaderboard = []
-    format_str = u'`{:<20}{:>19}{:>18}{:>9}{:>17}`'
-    for player_id, scores in sorted(global_state['trivia_leaderboard'].items(), key=lambda player_id_scores: player_id_scores[1]['total_earnings'], reverse=True):
-        name = await get_discord_name(player_id)
-        leaderboard.append(format_str.format(name, int_to_dollars(scores['total_earnings']), int_to_dollars(scores['highest_score']), scores['wins'], scores['played_games']))
-    if leaderboard:
-        leaderboard.insert(0, u'**' + format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Wins', u'Games Played') + u'**')
-        await client.send_message(message.channel, u'\n'.join(leaderboard))
-    else:
-        await client.send_message(message.channel, u'The leaderboard is empty.')
+    leaderboard = TIME_CACHE.get('leaderboard', None)
+    format_str = u'`{:<20}{:>19}{:>18}{:>17}`'
+    if not leaderboard:
+        await client.send_typing(message.channel)
+        player_scores = []
+        # Name, Total Earnings, Highest Score, Games Played
+        for user_filename in get_millionaire_game_filenames():
+            games = load_millionaire_games(user_filename)
+            if not games:
+                continue
+            name = await get_discord_name(games[0].user)
+            highest_earned = 0
+            total_earned = 0
+            count = 0
+            for game in games:
+                total_earned += game.amount_earned
+                highest_earned = max([highest_earned, game.amount_earned])
+                count += 1
+            player_scores.append((name, highest_earned, total_earned, count))
+        player_scores.sort(key=lambda item: item[3], reverse=True) # sort by total earned
+        leaderboard_builder = [format_str.format(*player_score) for player_score in player_scores]
+        leaderboard_builder.insert(0, u'**' + format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Games Played') + u'**')
+        leaderboard = u'\n'.join(leaderboard_builder)
+        TIME_CACHE['leaderboard'] = leaderboard
+    updated_str = u'\n*(Last updated {})*'.format(how_long_ago(TIME_CACHE.age('leaderboard')))
+    await client.send_message(message.channel, leaderboard + updated_str)
 
 
 @command(u'!fff', u'Play _Fastest Finger First_ to determine who gets to play _Millionaire!_')
 async def fff_command(message, rest):
-    client.send_typing(message.channel)
+    await client.send_typing(message.channel)
     question = get_questions(1)
     if question:
         question = question[0]
