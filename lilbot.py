@@ -622,9 +622,12 @@ async def millionaire_command(message, rest):
                       1000000]
     checkpoints = [5000, 50000, 1000000]
 
-    fifty_fifty = u'!50/50'
-    double_dip = u'!dd'
-    lifelines = [fifty_fifty, double_dip]
+
+    lifelines = Lifeline.FiftyFifty | Lifeline.DoubleDip
+    lifeline_key = {
+        Lifeline.FiftyFifty: u'!50/50',
+        Lifeline.DoubleDip: u'!dd',
+    }
     
     question_sets = [(5, 'easy'), (5, 'medium'), (4, 'hard')]
     questions = []
@@ -654,13 +657,13 @@ async def millionaire_command(message, rest):
 
     game_over = False
     stats_rounds = []
-    stats = MillionaireGame(player.id, encode_lifelines(lifelines), stats_rounds, timestamp(), None)
+    stats = MillionaireGame(player.id, lifelines, stats_rounds, timestamp(), None)
     walk_away_amount = 0
     score = 0
     for question_amount, question in zip(dollar_amounts, questions):
         if game_over:
             break
-        lifelines_used = []
+        lifelines_used = 0
         answers = [question.correct_answer, *question.incorrect_answers]
         random.shuffle(answers)
         answers = [(letter, answer) for letter, answer in zip(ALPHABET, answers)]
@@ -681,9 +684,9 @@ async def millionaire_command(message, rest):
                 return True
             if lower_msg[0].upper() in answer_key.keys() and (len(lower_msg) < 2 or not lower_msg[1].isalnum()):
                 return True
-            for lifeline in lifelines:
-                if lower_msg.startswith(lifeline):
-                    if double_dip in lifelines_used or (lifeline == double_dip and lifelines_used):
+            for lifeline, lifeline_command in lifeline_key.items():
+                if lifeline & lifelines and lower_msg.startswith(lifeline_command):
+                    if Lifeline.DoubleDip & lifelines_used or ((lifeline & Lifeline.DoubleDip) and lifelines_used):
                         return False
                     else:
                         return True
@@ -696,18 +699,18 @@ async def millionaire_command(message, rest):
             response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
             if response:
                 lower_msg = response.content.lower()
-                if lower_msg.startswith(fifty_fifty):
-                    lifelines.remove(fifty_fifty)
-                    lifelines_used.append(fifty_fifty)
+                if lower_msg.startswith(lifeline_key[Lifeline.FiftyFifty]):
+                    lifelines ^= Lifeline.FiftyFifty
+                    lifelines_used |= Lifeline.FiftyFifty
                     answers_to_remove = random.sample(question.incorrect_answers, 2)
                     for letter, answer in list(answer_key.items()):
                         if answer in answers_to_remove:
                             answer_key.pop(letter)
                     await client.send_message(message.channel, u'**Remaining answers:**\n{}'.format(answer_key_text()))
                     continuing = True
-                elif lower_msg.startswith(double_dip):
-                    lifelines.remove(double_dip)
-                    lifelines_used.append(double_dip)
+                elif lower_msg.startswith(lifeline_key[Lifeline.DoubleDip]):
+                    lifelines ^= Lifeline.DoubleDip
+                    lifelines_used |= Lifeline.DoubleDip
                     response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
                     if response:
                         if answer_key[response.content[0].upper()] == question.correct_answer:
@@ -760,7 +763,7 @@ async def millionaire_command(message, rest):
                 await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
                 stats_round.round_result = RoundResult.AnsweredIncorrectly
                 game_over = True
-        stats_round.lifelines_used = encode_lifelines(lifelines_used)
+        stats_round.lifelines_used = lifelines_used
         stats.rounds.append(stats_round)
     await client.send_message(message.channel, u'{} walks away with ${:,}.'.format(player, score))
     stats.amount_earned = score
@@ -789,6 +792,7 @@ async def leaderboard_command(message, rest):
                 count += 1
             player_scores.append((name, highest_earned, total_earned, count))
         player_scores.sort(key=lambda item: item[3], reverse=True) # sort by total earned
+        # TODO: fix printing dollar amounts here
         leaderboard_builder = [format_str.format(*player_score) for player_score in player_scores]
         leaderboard_builder.insert(0, u'**' + format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Games Played') + u'**')
         leaderboard = u'\n'.join(leaderboard_builder)

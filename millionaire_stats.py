@@ -2,6 +2,14 @@ import time
 import html
 
 
+# TODO: we'll probably want to figure out a binary format to serialize these to. json is a little overkill.
+
+
+class Lifeline:
+    FiftyFifty = 0b0001
+    DoubleDip = 0b0010
+
+
 class Question:
     # Example:
     # "category": "Science: Computers",
@@ -98,11 +106,3 @@ class MillionaireGame:
 
 def timestamp():
     return int(time.time())
-
-
-def encode_lifelines(lifelines):
-    return u';'.join(lifelines)
-
-
-def decode_lifelines(lifelines_str):
-    return lifelines_str.split(u';')
