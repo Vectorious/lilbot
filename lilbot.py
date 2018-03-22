@@ -115,7 +115,7 @@ MILLIONAIRE_STATS_DIR = 'millionaire_stats'
 TRIVIA_PATH = 'trivia_movies.json'
 
 BADMEME_BOT = discord.User(id=u'170903342199865344')
-TIME_CACHE = TimeCache(5 * 60)
+TIME_CACHE = TimeCache(60)
 
 NAME_CACHE = {}
 
@@ -295,19 +295,21 @@ def get_categories():
 
 
 def how_long_ago(seconds):
+    seconds = int(seconds)
     minutes = seconds // 60
     hours = minutes // 60
     days = hours // 24
     if days > 0:
-        unit = u'days' if days > 1 else u'day'
+        unit = u'day' if days == 1 else u'days'
         return u'{} {} ago'.format(days, unit)
     if hours > 0:
-        unit = u'hours' if hours > 1 else u'hour'
+        unit = u'hour' if hours == 1 else u'hours'
         return u'{} {} ago'.format(hours, unit)
     if minutes > 0:
-        unit = u'minutes' if minutes > 1 else u'minute'
+        unit = u'minute' if minutes == 1 else u'minutes'
         return u'{} {} ago'.format(minutes, unit)
-    return u'just now'
+    unit = u'second' if seconds == 1 else u'seconds'
+    return u'{} {} ago'.format(seconds, unit)
 
 
 def int_to_dollars(n):
@@ -790,10 +792,9 @@ async def leaderboard_command(message, rest):
                 total_earned += game.amount_earned
                 highest_earned = max([highest_earned, game.amount_earned])
                 count += 1
-            player_scores.append((name, highest_earned, total_earned, count))
-        player_scores.sort(key=lambda item: item[3], reverse=True) # sort by total earned
-        # TODO: fix printing dollar amounts here
-        leaderboard_builder = [format_str.format(*player_score) for player_score in player_scores]
+            player_scores.append((name, total_earned, highest_earned, count))
+        player_scores.sort(key=lambda item: item[1], reverse=True) # sort by total earned
+        leaderboard_builder = [format_str.format(name, int_to_dollars(total_earned), int_to_dollars(highest_earned), count) for name, total_earned, highest_earned, count in player_scores]
         leaderboard_builder.insert(0, u'**' + format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Games Played') + u'**')
         leaderboard = u'\n'.join(leaderboard_builder)
         TIME_CACHE['leaderboard'] = leaderboard
