@@ -10,6 +10,7 @@ Scripts/
 
 # data
 movie_quotes/
+millionaire_stats/
 *.json
 token.txt
 *.webm

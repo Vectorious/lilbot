@@ -112,6 +112,7 @@ ALPHABET = u'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 GLOBAL_STATE_PATH = 'global_state.json'
 QUOTES_DIR = 'movie_quotes'
 MILLIONAIRE_STATS_DIR = 'millionaire_stats'
+MILLIONAIRE_STATS_EXT = '.mgd'
 TRIVIA_PATH = 'trivia_movies.json'
 
 BADMEME_BOT = discord.User(id=u'170903342199865344')
@@ -294,22 +295,22 @@ def get_categories():
     return [(category[u'id'], category[u'name']) for category in response[u'trivia_categories']]
 
 
-def how_long_ago(seconds):
+def how_long(seconds):
     seconds = int(seconds)
     minutes = seconds // 60
     hours = minutes // 60
     days = hours // 24
     if days > 0:
         unit = u'day' if days == 1 else u'days'
-        return u'{} {} ago'.format(days, unit)
+        return u'{} {}'.format(days, unit)
     if hours > 0:
         unit = u'hour' if hours == 1 else u'hours'
-        return u'{} {} ago'.format(hours, unit)
+        return u'{} {}'.format(hours, unit)
     if minutes > 0:
         unit = u'minute' if minutes == 1 else u'minutes'
-        return u'{} {} ago'.format(minutes, unit)
+        return u'{} {}'.format(minutes, unit)
     unit = u'second' if seconds == 1 else u'seconds'
-    return u'{} {} ago'.format(seconds, unit)
+    return u'{} {}'.format(seconds, unit)
 
 
 def int_to_dollars(n):
@@ -336,33 +337,34 @@ def get_millionaire_game_filenames():
     return next(os.walk(MILLIONAIRE_STATS_DIR))[2]
 
 
-def load_millionaire_games(user_id, deserialize=True):
-    if isinstance(user_id, str) and user_id.endswith('.json'):
+def load_millionaire_games(user_id):
+    if isinstance(user_id, str) and user_id.endswith(MILLIONAIRE_STATS_EXT):
         if user_id.startswith(MILLIONAIRE_STATS_DIR):
             path = user_id
         else:
             path = os.path.join(MILLIONAIRE_STATS_DIR, user_id)
     else:
-        path = os.path.join(MILLIONAIRE_STATS_DIR, '{}.json'.format(user_id))
+        path = os.path.join(MILLIONAIRE_STATS_DIR, '{}{}'.format(user_id, MILLIONAIRE_STATS_EXT))
     try:
-        games = json.load(open(path, 'r', encoding='utf-8'))
+        file_size = os.path.getsize(path)
+        with open(path, 'rb') as read_byte_stream:
+            while read_byte_stream.tell() < file_size:
+                yield MillionaireGame.read(read_byte_stream)
     except FileNotFoundError:
         return None
-    if deserialize:
-        return [MillionaireGame.deserialize(game) for game in games]
-    else:
-        return games
 
 
 def save_millionaire_game(game):
-    path = os.path.join(MILLIONAIRE_STATS_DIR, '{}.json'.format(game.user))
-    games = load_millionaire_games(path, deserialize=False)
-    if not games:
-        games = []
-    games.append(game.serialize())
     temp_ext = '.temp'
+    path = os.path.join(MILLIONAIRE_STATS_DIR, '{}{}'.format(game.user, MILLIONAIRE_STATS_EXT))
     temp_path = path + temp_ext
-    json.dump(games, open(temp_path, 'w', encoding='utf-8'))
+    with open(temp_path, 'wb') as write_byte_stream:
+        try:
+            with open(path, 'rb') as read_byte_stream:
+                write_byte_stream.write(read_byte_stream.read())
+        except FileNotFoundError:
+            pass
+        game.write(write_byte_stream)
     os.replace(temp_path, path)
 
 
@@ -700,6 +702,7 @@ async def millionaire_command(message, rest):
             continuing = False
             response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
             if response:
+                given_answer = answer_key.get(response.content[0].upper(), None)
                 lower_msg = response.content.lower()
                 if lower_msg.startswith(lifeline_key[Lifeline.FiftyFifty]):
                     lifelines ^= Lifeline.FiftyFifty
@@ -715,55 +718,55 @@ async def millionaire_command(message, rest):
                     lifelines_used |= Lifeline.DoubleDip
                     response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
                     if response:
-                        if answer_key[response.content[0].upper()] == question.correct_answer:
+                        given_answer = answer_key.get(response.content[0].upper(), None)
+                        if given_answer == question.correct_answer:
                             await client.send_message(message.channel, u'**THAT IS CORRECT.**')
-                            stats_round.round_result = RoundResult.AnsweredCorrectly
                             if question_amount in checkpoints:
                                 score = question_amount
                             walk_away_amount = question_amount
+                            stats_round.given_answer = given_answer
                         else:
                             await client.send_message(message.channel, u"I'm sorry... that is incorrect. You have one more shot at the prize.")
                             answer_key.pop(response.content[0].upper())
                             await client.send_message(message.channel, u'**Remaining answers:**\n{}'.format(answer_key_text()))
                             response = await client.wait_for_message(timeout=120, channel=message.channel, check=check)
                             if response:
-                                if answer_key[response.content[0].upper()] == question.correct_answer:
+                                given_answer = answer_key.get(response.content[0].upper(), None)
+                                if given_answer == question.correct_answer:
                                     await client.send_message(message.channel, u'**THAT IS CORRECT.**')
-                                    stats_round.round_result = RoundResult.AnsweredCorrectly
+                                    stats_round.given_answer = given_answer
                                     if question_amount in checkpoints:
                                         score = question_amount
                                     walk_away_amount = question_amount
                                 else:
                                     await client.send_message(message.channel, u'Wrong. The correct answer was **{}**.'.format(question.correct_answer))
-                                    stats_round.round_result = RoundResult.AnsweredIncorrectly
+                                    stats_round.given_answer = given_answer
                                     game_over = True
                             else:
                                 await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
-                                stats_round.round_result = RoundResult.AnsweredIncorrectly
+                                stats_round.time_up = True
                                 game_over = True
                     else:
                         await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
-                        stats_round.round_result = RoundResult.AnsweredIncorrectly
+                        stats_round.time_up = True
                         game_over = True
                 elif lower_msg.startswith(u'!walk'):
                     score = walk_away_amount
                     await client.send_message(message.channel, u'I respect that. The correct answer was **{}** by the way.'.format(question.correct_answer))
-                    stats_round.round_result = RoundResult.Walked
                     game_over = True
+                elif given_answer == question.correct_answer:
+                    await client.send_message(message.channel, u'**THAT IS CORRECT.**')
+                    stats_round.given_answer = given_answer
+                    if question_amount in checkpoints:
+                        score = question_amount
+                    walk_away_amount = question_amount
                 else:
-                    if answer_key[lower_msg[0].upper()] == question.correct_answer:
-                        await client.send_message(message.channel, u'**THAT IS CORRECT.**')
-                        stats_round.round_result = RoundResult.AnsweredCorrectly
-                        if question_amount in checkpoints:
-                            score = question_amount
-                        walk_away_amount = question_amount
-                    else:
-                        await client.send_message(message.channel, u'Wrong. The correct answer was **{}**.'.format(question.correct_answer))
-                        stats_round.round_result = RoundResult.AnsweredIncorrectly
-                        game_over = True
+                    await client.send_message(message.channel, u'Wrong. The correct answer was **{}**.'.format(question.correct_answer))
+                    stats_round.given_answer = given_answer
+                    game_over = True
             else:
                 await client.send_message(message.channel, u'Time is up. The correct answer was **{}**.'.format(question.correct_answer))
-                stats_round.round_result = RoundResult.AnsweredIncorrectly
+                stats_round.time_up = True
                 game_over = True
         stats_round.lifelines_used = lifelines_used
         stats.rounds.append(stats_round)
@@ -778,27 +781,32 @@ async def leaderboard_command(message, rest):
     format_str = u'`{:<20}{:>19}{:>18}{:>17}`'
     if not leaderboard:
         await client.send_typing(message.channel)
+        start = time.time()
         player_scores = []
         # Name, Total Earnings, Highest Score, Games Played
         for user_filename in get_millionaire_game_filenames():
-            games = load_millionaire_games(user_filename)
-            if not games:
-                continue
-            name = await get_discord_name(games[0].user)
+            name = None
             highest_earned = 0
             total_earned = 0
             count = 0
-            for game in games:
+            for game in load_millionaire_games(user_filename):
+                if not name:
+                    name = await get_discord_name(game.user)
                 total_earned += game.amount_earned
                 highest_earned = max([highest_earned, game.amount_earned])
                 count += 1
-            player_scores.append((name, total_earned, highest_earned, count))
+                if (count % 5000) == 0:
+                    await client.send_typing(message.channel)
+            if name:
+                player_scores.append((name, total_earned, highest_earned, count))
         player_scores.sort(key=lambda item: item[1], reverse=True) # sort by total earned
         leaderboard_builder = [format_str.format(name, int_to_dollars(total_earned), int_to_dollars(highest_earned), count) for name, total_earned, highest_earned, count in player_scores]
         leaderboard_builder.insert(0, u'**' + format_str.format(u'Name', u'Total Earnings', u'Highest Score', u'Games Played') + u'**')
         leaderboard = u'\n'.join(leaderboard_builder)
+        updated_str = u'\n*(Generated in {:.2f} seconds)*'.format(time.time() - start)
         TIME_CACHE['leaderboard'] = leaderboard
-    updated_str = u'\n*(Last updated {})*'.format(how_long_ago(TIME_CACHE.age('leaderboard')))
+    else:
+        updated_str = u'\n*(Last updated {} ago)*'.format(how_long(TIME_CACHE.age('leaderboard')))
     await client.send_message(message.channel, leaderboard + updated_str)
 
 

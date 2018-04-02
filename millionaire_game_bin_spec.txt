@@ -1,0 +1,40 @@
+# <-> = two way mapping
+# little-endian
+u32 =                   unsigned 32-bit integer
+i32 =                   signed 32-bit integer
+
+# we know item type of list ahead of time, so these are generic
+List<Item> = {
+    length =            Byte
+    items =             length * Item
+}
+
+String = List[Byte]  # UTF-8 encoded
+
+Question = {
+    category =          Byte  # <-> String
+    type =              Byte  # <-> String
+    difficulty =        Byte  # <-> String
+    question =          String  # make u32? <-> String
+    correct_answer =    String  # make u32? <-> String
+    incorrect_answers = List[String]  # make List[u32?] <-> List[String]
+}
+
+Round = {
+    question =          Question
+    question_amount =   Byte  # <-> int
+    lifelines_used =    Byte
+    given_answer =      Byte  # -3: walked, -2: out of time, -1: correct, 0+: incorrect_answers[index]
+}
+
+Game = {
+    user =              String  # we could also make this u32? <-> String
+    lifelines =         Byte
+    rounds =            List[Round]
+    timestamp =         u32
+    amount_earned =     i32
+}
+
+File = {
+    Game|Game|Game...
+}
